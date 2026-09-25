@@ -1,5 +1,5 @@
 /*!
- * sq-flipbook.js v1.0.1 — self-hosted PDF flipbook for Squarespace code blocks
+ * sq-flipbook.js v1.2.0 — self-hosted PDF flipbook for Squarespace code blocks
  * Renders a PDF with PDF.js, flips it with StPageFlip (page-flip, MIT).
  *
  * Usage (one code block, Business plan or higher):
@@ -14,6 +14,7 @@
  *   data-download="true"   show a Download button (default true)
  *   data-max-width="1100"  max book width in px (default 1100)
  *   data-accent="#0057b8"  control color (default: inherits currentColor)
+ *   data-relay="https://…"  PDF relay URL (default: RELAY_URL below)
  */
 (function () {
   'use strict';
@@ -21,6 +22,9 @@
   var PDFJS_URL   = 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js';
   var PDFJS_WORKER= 'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.worker.min.js';
   var PAGEFLIP_URL= 'https://cdn.jsdelivr.net/npm/page-flip@2.0.7/dist/js/page-flip.browser.min.js';
+  // Relay for Squarespace-hosted PDFs (their file CDN blocks cross-origin reads).
+  // Cloudflare Worker URL. Override per block with data-relay="https://…".
+  var RELAY_URL   = 'https://sq-flipbook-relay.zsawtelle.workers.dev';
 
   /* ---------- styles (injected once) ---------- */
   var CSS = [
@@ -146,7 +150,14 @@
     ])
     .then(function () {
       window.pdfjsLib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER;
-      return window.pdfjsLib.getDocument({ url: self.pdfUrl }).promise;
+      // Try direct first; Squarespace /s/ files fail cross-origin, so retry via the relay.
+      return window.pdfjsLib.getDocument({ url: self.pdfUrl }).promise.catch(function (err) {
+        if (err && (err.name === 'MissingPDFException' || err.name === 'InvalidPDFException')) throw err;
+        var abs = new URL(self.pdfUrl, window.location.href).href;
+        var relay = self.root.getAttribute('data-relay') || RELAY_URL;
+        console.info('[sq-flipbook] direct load blocked, using relay');
+        return window.pdfjsLib.getDocument({ url: relay + '?url=' + encodeURIComponent(abs) }).promise;
+      });
     })
     .then(function (pdf) { return self.render(pdf); })
     .then(function (pages) { self.mount(pages); })
