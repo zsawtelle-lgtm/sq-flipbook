@@ -1,5 +1,5 @@
 /*!
- * sq-flipbook.js v1.3.0 — self-hosted PDF flipbook for Squarespace code blocks
+ * sq-flipbook.js v1.4.0 — self-hosted PDF flipbook for Squarespace code blocks
  * Renders a PDF with PDF.js, flips it with StPageFlip (page-flip, MIT).
  * Icons: Heroicons v2 outline (MIT), same set as Will's Toolkit.
  *
@@ -12,6 +12,8 @@
  *   data-max-height="720"  max book height in px (default: none)
  *   data-align="center"    left | center | right (default center)
  *   data-accent="#0f3d80"  arrow + control color (default: site paragraph color)
+ *   data-mobile-arrows="true"  single-page (mobile) view: true = arrows under the book,
+ *                          overlay = arrows on the page edges, false = no arrows (swipe only)
  *   data-links="true"      make PDF links clickable (default true)
  *   data-download="true"   show the Download button (default true)
  *   data-fullscreen="true" show the Full screen button (default true)
@@ -33,6 +35,8 @@
   var CSS = [
     /* type + color inherit from the Squarespace theme, with safe fallbacks */
     '.sq-flipbook{--sqfb-accent:var(--paragraphMediumColor,currentColor);',
+      '--sqfb-arrow-size:44px;--sqfb-arrow-stroke:1.5;--sqfb-controls-size:.9rem;--sqfb-controls-gap:18px;',
+      '--sqfb-link-hover:rgba(255,220,0,.18);--sqfb-spine:.2;--sqfb-fullscreen-bg:var(--siteBackgroundColor,#fff);--sqfb-fullscreen-size:88;',
       'position:relative;width:100%;margin:0 auto;',
       'font-family:var(--body-font-font-family,inherit);font-weight:var(--body-font-font-weight,inherit);',
       'letter-spacing:var(--body-font-letter-spacing,inherit);font-style:var(--body-font-font-style,inherit);color:inherit}',
@@ -42,34 +46,40 @@
     '.sq-flipbook:focus-visible{outline:2px solid var(--sqfb-accent);outline-offset:4px}',
 
     /* stage leaves room for the side arrows */
-    '.sq-flipbook__stage{position:relative;padding:0 56px}',
+    '.sq-flipbook__stage{position:relative;padding:0 calc(var(--sqfb-arrow-size) + 12px)}',
+    '.sq-flipbook--portrait:not(.sq-flipbook--mab-overlay) .sq-flipbook__stage{padding:0}',
     '.sq-flipbook__book{position:relative;width:100%;margin:0 auto}',
     '.sq-flipbook__page{background:#fff;overflow:hidden}',
     '.sq-flipbook__page img{display:block;width:100%;height:100%;object-fit:fill;pointer-events:none;user-select:none;-webkit-user-drag:none}',
 
     /* PDF links */
     '.sq-flipbook__link{position:absolute;z-index:2;display:block;border-radius:2px;cursor:pointer;transition:background-color .15s}',
-    '.sq-flipbook__link:hover{background-color:rgba(255,220,0,.18)}',
+    '.sq-flipbook__link:hover{background-color:var(--sqfb-link-hover)}',
     '.sq-flipbook__link:focus-visible{outline:2px solid var(--sqfb-accent);outline-offset:1px}',
 
     /* static spine shadow, two-page mode only */
     '.sq-flipbook__spine{position:absolute;top:0;bottom:0;left:50%;width:70px;transform:translateX(-50%);pointer-events:none;z-index:50;opacity:0;transition:opacity .2s;',
-      'background:linear-gradient(90deg,rgba(0,0,0,0) 0%,rgba(0,0,0,.08) 42%,rgba(0,0,0,.2) 50%,rgba(0,0,0,.08) 58%,rgba(0,0,0,0) 100%)}',
+      'background:linear-gradient(90deg,transparent 0%,rgba(0,0,0,calc(var(--sqfb-spine) * .4)) 42%,rgba(0,0,0,var(--sqfb-spine)) 50%,rgba(0,0,0,calc(var(--sqfb-spine) * .4)) 58%,transparent 100%)}',
     '.sq-flipbook--landscape .sq-flipbook__spine{opacity:1}',
     '.sq-flipbook--flipping .sq-flipbook__spine{opacity:0}',
 
     /* side arrows: Heroicons arrow-left-circle / arrow-right-circle */
     '.sq-flipbook__arrow{position:absolute;top:50%;z-index:60;transform:translateY(-50%);appearance:none;background:none;border:0;padding:0;margin:0;',
-      'width:44px;height:44px;color:var(--sqfb-accent);cursor:pointer;border-radius:50%;transition:opacity .15s,transform .15s}',
+      'width:var(--sqfb-arrow-size);height:var(--sqfb-arrow-size);color:var(--sqfb-accent);cursor:pointer;border-radius:50%;transition:opacity .15s,transform .15s}',
     '.sq-flipbook__arrow--prev{left:0}',
     '.sq-flipbook__arrow--next{right:0}',
-    '.sq-flipbook__arrow svg{display:block;width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:1.5;stroke-linecap:round;stroke-linejoin:round}',
+    '.sq-flipbook__arrow svg{display:block;width:100%;height:100%;fill:none;stroke:currentColor;stroke-width:var(--sqfb-arrow-stroke);stroke-linecap:round;stroke-linejoin:round}',
     '.sq-flipbook__arrow:hover{transform:translateY(-50%) scale(1.06)}',
     '.sq-flipbook__arrow:focus-visible{outline:2px solid var(--sqfb-accent);outline-offset:2px}',
     '.sq-flipbook__arrow[disabled]{opacity:.25;cursor:default;transform:translateY(-50%)}',
+    '.sq-flipbook__nav{display:inline-flex;align-items:center;gap:14px}',
+    '.sq-flipbook__nav .sq-flipbook__arrow{position:static;transform:none}',
+    '.sq-flipbook__nav .sq-flipbook__arrow:hover{transform:scale(1.06)}',
+    '.sq-flipbook__nav .sq-flipbook__arrow[disabled]{transform:none}',
+    '.sq-flipbook--mab-false.sq-flipbook--portrait .sq-flipbook__arrow{display:none}',
 
     /* bottom bar: page count, full screen, download */
-    '.sq-flipbook__controls{display:flex;align-items:center;justify-content:center;gap:18px;flex-wrap:wrap;margin-top:16px;font-size:.9rem;line-height:1.2}',
+    '.sq-flipbook__controls{display:flex;align-items:center;justify-content:center;gap:var(--sqfb-controls-gap);flex-wrap:wrap;margin-top:16px;font-size:var(--sqfb-controls-size);line-height:1.2}',
     '.sq-flipbook__count{font-variant-numeric:tabular-nums;opacity:.75}',
     '.sq-flipbook__tool{appearance:none;background:none;border:0;padding:4px 0;margin:0;font:inherit;letter-spacing:inherit;color:var(--sqfb-accent);cursor:pointer;',
       'display:inline-flex;align-items:center;gap:6px;text-decoration:none}',
@@ -84,13 +94,15 @@
     '.sq-flipbook__error{padding:24px;text-align:center;opacity:.8}',
 
     /* small screens: arrows overlay the page edges */
-    '@media (max-width:640px){.sq-flipbook__stage{padding:0}',
-      '.sq-flipbook__arrow{width:38px;height:38px;background:var(--siteBackgroundColor,#fff);box-shadow:0 1px 4px rgba(0,0,0,.18)}',
-      '.sq-flipbook__arrow--prev{left:6px}.sq-flipbook__arrow--next{right:6px}}',
+    '.sq-flipbook--mab-overlay.sq-flipbook--portrait .sq-flipbook__stage{padding:0}',
+    '.sq-flipbook--mab-overlay.sq-flipbook--portrait .sq-flipbook__arrow{width:38px;height:38px;background:var(--siteBackgroundColor,#fff);box-shadow:0 1px 4px rgba(0,0,0,.18)}',
+    '.sq-flipbook--mab-overlay.sq-flipbook--portrait .sq-flipbook__arrow--prev{left:6px}',
+    '.sq-flipbook--mab-overlay.sq-flipbook--portrait .sq-flipbook__arrow--next{right:6px}',
 
     /* full screen */
-    '.sq-flipbook:fullscreen{max-width:none!important;background:var(--siteBackgroundColor,#fff);padding:24px;box-sizing:border-box;display:flex;flex-direction:column;justify-content:center}',
-    '.sq-flipbook:fullscreen .sq-flipbook__book{max-width:calc((100vh - 120px) * var(--sqfb-spread-ratio,1.4))}',
+    '.sq-flipbook:fullscreen{max-width:none!important;width:100vw;height:100vh;margin:0;background:var(--sqfb-fullscreen-bg);box-sizing:border-box;display:flex;flex-direction:column;align-items:center;justify-content:center}',
+    '.sq-flipbook:fullscreen .sq-flipbook__stage{box-sizing:content-box;width:min(calc(var(--sqfb-fullscreen-size) * 1vw - 2 * (var(--sqfb-arrow-size) + 12px)),calc((var(--sqfb-fullscreen-size) * 1vh - 60px) * var(--sqfb-view-ratio,1.4)))}',
+    '.sq-flipbook--portrait:fullscreen .sq-flipbook__stage{width:min(calc(var(--sqfb-fullscreen-size) * 1vw),calc((var(--sqfb-fullscreen-size) * 1vh - 60px) * var(--sqfb-view-ratio,.7)))}',
     '@media (prefers-reduced-motion:reduce){.sq-flipbook__spine,.sq-flipbook__arrow,.sq-flipbook__link{transition:none}}'
   ].join('');
 
@@ -142,8 +154,11 @@
       shadow:     parseFloat(attr(root, 'shadow', 0.5)),
       speed:      parseInt(attr(root, 'speed', 700), 10),
       scale:      Math.min(2, Math.max(1, parseFloat(attr(root, 'scale', 1.5)))),
-      relay:      attr(root, 'relay', RELAY_URL)
+      relay:      attr(root, 'relay', RELAY_URL),
+      mobileArrows: String(attr(root, 'mobile-arrows', 'true')).toLowerCase()
     };
+    if (['true', 'false', 'overlay'].indexOf(this.opts.mobileArrows) < 0) this.opts.mobileArrows = 'true';
+    root.classList.add('sq-flipbook--mab-' + this.opts.mobileArrows);
     var accent = attr(root, 'accent', '');
     if (accent) root.style.setProperty('--sqfb-accent', accent);
     if (this.opts.maxWidth) root.style.maxWidth = this.opts.maxWidth + 'px';
@@ -165,7 +180,7 @@
         '<button type="button" class="sq-flipbook__arrow sq-flipbook__arrow--next" aria-label="Next page" hidden>' + ICONS.next + '</button>' +
       '</div>' +
       '<div class="sq-flipbook__controls" hidden>' +
-        '<span class="sq-flipbook__count" aria-live="polite"></span>' +
+        '<span class="sq-flipbook__nav"><span class="sq-flipbook__count" aria-live="polite"></span></span>' +
         (o.fullscreen ? '<button type="button" class="sq-flipbook__tool" data-act="full">' + ICONS.full + '<span>Full screen</span></button>' : '') +
         (o.download ? '<a class="sq-flipbook__tool" href="' + this.pdfUrl + '" download target="_blank" rel="noopener">' + ICONS.down + '<span>Download</span></a>' : '') +
       '</div>';
@@ -180,6 +195,7 @@
       next:     r.querySelector('.sq-flipbook__arrow--next'),
       controls: r.querySelector('.sq-flipbook__controls'),
       count:    r.querySelector('.sq-flipbook__count'),
+      nav:      r.querySelector('.sq-flipbook__nav'),
       full:     r.querySelector('[data-act="full"]')
     };
   };
@@ -332,7 +348,7 @@
   Flipbook.prototype.mount = function (pages) {
     var self = this, $ = this.$, o = this.opts;
     var ratio = this.pageH / this.pageW;                 // page height / width
-    this.root.style.setProperty('--sqfb-spread-ratio', (2 / ratio).toFixed(3));
+    this.ratio = ratio;
 
     // Height cap -> width cap for the whole spread
     if (o.maxHeight) {
@@ -411,8 +427,17 @@
   };
 
   Flipbook.prototype.orient = function (o) {
-    this.root.classList.toggle('sq-flipbook--landscape', o === 'landscape');
-    this.root.classList.toggle('sq-flipbook--portrait', o === 'portrait');
+    var $ = this.$, portrait = o === 'portrait';
+    this.root.classList.toggle('sq-flipbook--landscape', !portrait);
+    this.root.classList.toggle('sq-flipbook--portrait', portrait);
+    // visible width / height, used to size full screen
+    this.root.style.setProperty('--sqfb-view-ratio', ((portrait ? 1 : 2) / this.ratio).toFixed(4));
+    // single-page view + mobile-arrows="true": move arrows under the book, around the page count
+    if (portrait && this.opts.mobileArrows === 'true') {
+      if ($.prev.parentNode !== $.nav) { $.nav.insertBefore($.prev, $.count); $.nav.appendChild($.next); }
+    } else if ($.prev.parentNode !== $.stage) {
+      $.stage.appendChild($.prev); $.stage.appendChild($.next);
+    }
   };
 
   Flipbook.prototype.update = function (idx) {
