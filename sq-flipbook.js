@@ -1,5 +1,5 @@
 /*!
- * sq-flipbook.js — self-hosted PDF flipbook for Squarespace code blocks
+ * sq-flipbook.js v1.0.1 — self-hosted PDF flipbook for Squarespace code blocks
  * Renders a PDF with PDF.js, flips it with StPageFlip (page-flip, MIT).
  *
  * Usage (one code block, Business plan or higher):
@@ -152,7 +152,13 @@
     .then(function (pages) { self.mount(pages); })
     .catch(function (err) {
       console.error('[sq-flipbook]', err);
-      self.fail('The document could not be displayed.');
+      var why = 'The document could not be displayed.';
+      var n = (err && err.name) || '', m = (err && err.message) || '';
+      if (n === 'MissingPDFException') why = 'PDF not found. Check the data-pdf path (case-sensitive).';
+      else if (n === 'UnexpectedResponseException') why = 'The server returned an error for the PDF (' + (err.status || m) + ').';
+      else if (n === 'InvalidPDFException') why = 'The file is not a valid PDF.';
+      else if (/fetch|network|CORS/i.test(m) || n === 'UnknownErrorException') why = 'The browser blocked the PDF request. The PDF must be on this same domain, or on a host that allows cross-origin access.';
+      self.fail(why);
     });
   };
 
